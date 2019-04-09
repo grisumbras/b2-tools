@@ -1,0 +1,25 @@
+# Copyright 2019 Dmitry Arkhipov
+# Distributed under the Boost Software License, Version 1.0.
+# (See accompanying file LICENSE_1_0.txt or copy at
+# http://www.boost.org/LICENSE_1_0.txt)
+
+
+import option ;
+import package ;
+import path ;
+
+
+project b2-tools ;
+
+
+constant VERSION : 0.1.0 ;
+
+
+include modules/install-extra.jam ;
+
+
+alias install
+  : [ install (datarootdir)/boost-build/contrib : [ glob modules/*.jam ] ]
+    [ install (docdir) : LICENSE ]
+  ;
+explicit install ;
