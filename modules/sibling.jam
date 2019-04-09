@@ -1,0 +1,41 @@
+# Copyright 2019 Dmitry Arkhipov
+# Distributed under the Boost Software License, Version 1.0.
+# (See accompanying file LICENSE_1_0.txt or copy at
+# http://www.boost.org/LICENSE_1_0.txt)
+
+
+import "class" : new ;
+import generate ;
+import param ;
+import type ;
+
+
+# Adopts a pre-existing file that is a sibling to source. Useful when an action
+# creates a file as a side-effect
+rule sibling
+  ( target : source : requirements * : default-build * : usage-requirements * )
+{
+  param.handle-named-params
+    source requirements default-build usage-requirements ;
+
+  generate $(target)
+    : $(source)
+    : <generating-rule>@sibling.adopt-generate
+      $(requirements)
+    : $(default-build)
+    : $(usage-requirements)
+    ;
+}
+
+
+rule adopt-generate ( project name : property-set : source ) {
+  new file-target $(name) exact
+    : [ type.type $(name) ]
+    : $(project)
+    : [ new non-scanning-action $(source) : sibling.adopt : $(property-set) ]
+    : [ $(source).path ]
+    ;
+}
+
+
+actions adopt { }
