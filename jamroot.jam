@@ -23,3 +23,9 @@ alias install
     [ install (docdir) : LICENSE ]
   ;
 explicit install ;
+
+
+using doxygen ;
+import doxygen ;
+
+doxygen.xml xyz : [ glob-tree-ex include : *.hpp ] ;
