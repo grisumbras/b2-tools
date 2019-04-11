@@ -11,33 +11,19 @@ import project ;
 import targets ;
 
 
+.dirs
+  = exec-prefix bindir sbindir libexecdir datarootdir datadir
+    sysconfdir sharedstatedir localstatedir runstatedir includedir
+    oldincludedir docdir infodir htmldir dvidir pdfdir psdir libdir lispdir
+    localedir mandir
+  ;
+
+
 # features that specify paths to installation prefixes and well-known
 # installation directories
 feature.feature stage-prefix : : free path ;
 feature.feature install-prefix : : free path ;
-feature.feature install-exec-prefix : : free ;
-feature.feature install-bindir : : free ;
-feature.feature install-sbindir : : free ;
-feature.feature install-libexecdir : : free ;
-feature.feature install-datarootdir : : free ;
-feature.feature install-datadir : : free ;
-feature.feature install-sysconfdir : : free ;
-feature.feature install-sharedstatedir : : free ;
-feature.feature install-localstatedir : : free ;
-feature.feature install-runstatedir : : free ;
-feature.feature install-includedir : : free ;
-feature.feature install-oldincludedir : : free ;
-feature.feature install-docdir : : free ;
-feature.feature install-infodir : : free ;
-feature.feature install-htmldir : : free ;
-feature.feature install-dvidir : : free ;
-feature.feature install-pdfdir : : free ;
-feature.feature install-psdir : : free ;
-feature.feature install-libdir : : free ;
-feature.feature install-lispdir : : free ;
-feature.feature install-localedir : : free ;
-feature.feature install-mandir : : free ;
-
+for local dir in $(.dirs) { feature.feature install-$(dir) : : free ; }
 
 # feature that specifies the name of the package to which installed files
 # belong
@@ -73,7 +59,8 @@ class install-extra-target-class : install-target-class {
     local prefix
       = [ install-extra.get-dir $(well-known-dir)
         : $(property-set)
-        : $(package-name)
+        : staged
+        : [ $(self.project).get id ]
         ] ;
     return [ path.root $(subdir) $(prefix) ] ;
   }
@@ -104,29 +91,48 @@ rule install ( name : sources * : requirements * : default-build * ) {
 
 
 # Returns the path to the requested well-known directory
-rule get-dir ( well-known-dir : property-set : project ? ) {
-  project ?= [ project.current ] ;
-  local package-name = [ $(property-set).get <install-package> ] ;
-  if ! $(package-name) {
-    package-name = [ $(project).get id ] ;
-    if ! $(package-name) {
-      local root =  [ $(project).get project-root ] ;
-      root = [ path.root $(root) [ path.pwd ] ] ;
-      package-name = $(root:B) ;
-    }
-  }
+rule get-dir ( well-known-dir : property-set : flags * : project ? ) {
+  local package-name = [ get-package-name $(property-set) : $(project) ] ;
+
+  local relative ;
+  if relative in $(flags)  { relative = relative ; }
+
+  local staged ;
+  if staged in $(flags)  { staged = staged ; }
 
   return
-    [ get-dir-aux $(well-known-dir) : $(package-name) : $(property-set) ] ;
+    [ get-dir-aux $(well-known-dir)
+    : $(package-name)
+    : $(property-set)
+    : $(relative)
+    : $(staged)
+    ] ;
 }
 
 
-local rule get-dir-aux ( well-known-dir : package-name : property-set ) {
+rule get-package-name ( property-set : package ? ) {
+  if ! $(package) {
+    local project = [ project.current ] ;
+    package = [ $(project).get id ] ;
+    if ! $(package) {
+      local root =  [ $(project).get project-root ] ;
+      root = [ path.root $(root) [ path.pwd ] ] ;
+      package = $(root) ;
+    }
+  }
+  return $(package:B) ;
+}
+
+
+local rule get-dir-aux
+  ( well-known-dir : package-name : property-set : relative ? : staged ? )
+{
   local loc ;
   # We treat the 'prefix' directory in a special way, because it doesn't have
   # a base directory and it can be overriden by staging prefix.
   if $(well-known-dir) = prefix {
-    loc = [ get-install-prefix $(package-name) : $(property-set) ] ;
+    loc
+      = [ get-install-prefix $(package-name) : $(property-set) : $(staged) ] ;
   } else {
     # First, try getting the path for requested directory from properties.
     loc = [ $(property-set).get <install-$(well-known-dir)> ] ;
@@ -135,15 +141,36 @@ local rule get-dir-aux ( well-known-dir : package-name : property-set ) {
     # Otherwise, use the default path. In both cases, it could be a
     # relative path.
     loc ?= $(info[1]) ;
-    # If the path is indeed relative and if there is a base directory
-    # for the requested directory, then we prefix the path to requested
-    # directory with the path to base directory
-    if ( ! [ path.is-rooted $(loc) ]  ) && $(info[2]) {
-      local base
-        = [ get-dir-aux $(info[2]) : $(package-name) : $(property-set) ] ;
-      loc = [ path.root $(loc) $(base) ] ;
+
+    # If there is a base directory, we may need to either prepend it to the
+    # result, if we want an absolute path, or remove it from the beginning, if
+    # we want a relative path.
+    if $(info[2]) {
+      local rooted = [ path.is-rooted $(loc) ] ;
+
+      local operation ;
+      if $(rooted) && $(relative) {
+        # We only need to prepend base if the result is relative.
+        operation = relative ;
+      } else if ! ( $(rooted) || $(relative) ) {
+        # We only need to remove base if the result is absolute.
+        operation = root ;
+      }
+
+      if $(operation) {
+        # Always get absolute path to base.
+        local base
+          = [ get-dir-aux $(info[2])
+            : $(package-name)
+            : $(property-set)
+            :
+            : $(staged)
+            ] ;
+        loc = [ path.$(operation) $(loc) $(base) ] ;
+      }
     }
   }
+
   return $(loc) ;
 }
 
@@ -177,13 +204,15 @@ local rule well-known-default ( well-known-dir : package-name ) {
     case * :
       import errors ;
       errors.error
-        $(well-known-dir) is not a well-known installation directory. ;
+        $(well-known-dir) is not a well-known installation directory. Choose
+        one of prefix, "$(.dirs:J=, )". ;
   }
 }
 
 
-local rule get-install-prefix ( package-name : property-set ) {
-  local prefix = [ $(property-set).get <stage-prefix> ] ;
+local rule get-install-prefix ( package-name : property-set : staged ? ) {
+  local prefix ;
+  if $(staged) { prefix = [ $(property-set).get <stage-prefix> ] ; }
   prefix ?= [ $(property-set).get <install-prefix> ] ;
   if ! $(prefix) {
     if [ modules.peek : NT ] {
